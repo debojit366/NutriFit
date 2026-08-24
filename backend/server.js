@@ -1,4 +1,3 @@
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -7,6 +6,7 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 require('./cron/reminderCron'); // Reminder cron job
+
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const dietRoutes = require('./routes/dietRoutes');
@@ -27,7 +27,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     // Define allowed origins
     const allowedOrigins = [
       'http://localhost:5173',
@@ -36,11 +36,11 @@ const corsOptions = {
       'http://localhost:5174', // Vite sometimes switches to this if 5173 is busy
       process.env.FRONTEND_URL
     ];
-    
+
     if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
       callback(null, true);
     } else {
-      console.log("Blocked by CORS:", origin); // Helps debug
+      console.log('Blocked by CORS:', origin); // Helps debug
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -52,9 +52,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Handle preflight (OPTIONS) requests
-// app.options('*', cors(corsOptions));
-
-
 app.options(/.*/, cors(corsOptions));
 
 // Rate limiting configuration
@@ -82,13 +79,14 @@ let isMongoConnected = false;
 
 const connectToMongoDB = async () => {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/healthfitness';
-    
+    const mongoUri = process.env.MONGODB_URI;
+    console.log(mongoUri)
+
     await mongoose.connect(mongoUri, {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
     });
-    
+
     console.log('MongoDB connected successfully');
     isMongoConnected = true;
   } catch (err) {
@@ -99,15 +97,23 @@ const connectToMongoDB = async () => {
   }
 };
 
-// Attempt to connect to MongoDB
-connectToMongoDB();
+// Keep isMongoConnected accurate even if the connection drops or recovers later
+mongoose.connection.on('disconnected', () => {
+  isMongoConnected = false;
+  console.warn('MongoDB disconnected');
+});
+
+mongoose.connection.on('reconnected', () => {
+  isMongoConnected = true;
+  console.log('MongoDB reconnected');
+});
 
 // Middleware to check database connection for routes that require it
 const requireDatabase = (req, res, next) => {
   if (!isMongoConnected) {
-    return res.status(503).json({ 
-      error: 'Database unavailable', 
-      message: 'MongoDB connection is not established. Please check your database configuration.' 
+    return res.status(503).json({
+      error: 'Database unavailable',
+      message: 'MongoDB connection is not established. Please check your database configuration.'
     });
   }
   next();
@@ -124,8 +130,8 @@ app.use('/api/admin', requireDatabase, apiLimiter, adminRoutes);
 
 // Health check endpoint (works without database)
 app.get('/api/health-check', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     database: isMongoConnected ? 'connected' : 'disconnected'
@@ -136,8 +142,8 @@ app.get('/api/health-check', (req, res) => {
 app.get('/api/database-status', (req, res) => {
   res.json({
     connected: isMongoConnected,
-    message: isMongoConnected 
-      ? 'Database connection is active' 
+    message: isMongoConnected
+      ? 'Database connection is active'
       : 'Database connection is not available. Please check MongoDB configuration.'
   });
 });
@@ -152,17 +158,24 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  if (!isMongoConnected) {
-    console.log('Note: Server started without database connection');
-    console.log('To connect to MongoDB, ensure it\'s running or update MONGODB_URI in .env');
-  }
-});
+// Wait for the MongoDB connection attempt to resolve (success or failure)
+// BEFORE starting the server, so the startup log accurately reflects reality.
+const startServer = async () => {
+  await connectToMongoDB();
+
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+    if (isMongoConnected) {
+      console.log('MongoDB connection verified before startup');
+    } else {
+      console.log('Note: Server started without database connection');
+      console.log("To connect to MongoDB, ensure it's running or update MONGODB_URI in .env");
+    }
+  });
+};
+
+startServer();
 
 module.exports = app;
-
-
-
-

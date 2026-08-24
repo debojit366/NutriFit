@@ -113,22 +113,24 @@ const userSchema = new mongoose.Schema({
 });
 
 // Calculate BMI and BMR before saving
-userSchema.pre('save', function(next) {
+// NOTE: no `next` callback param — mongoose@9.x pre-save hooks use
+// return/throw instead of next(). Calling a nonexistent `next()` throws
+// "TypeError: next is not a function".
+userSchema.pre('save', function() {
   try {
     if (this.isModified('healthProfile')) {
       const { weight, height, age, gender } = this.healthProfile;
-      
+
       // Validate required fields
       if (!weight || !height || !age || !gender) {
         console.error('Missing required fields for BMI/BMR calculation:', { weight, height, age, gender });
-        next();
         return;
       }
 
       // Calculate BMI
       const heightInMeters = height / 100;
       this.healthProfile.bmi = Number((weight / (heightInMeters * heightInMeters)).toFixed(1));
-      
+
       // Calculate BMR using Mifflin-St Jeor Equation
       // Men: BMR = 10W + 6.25H - 5A + 5
       // Women: BMR = 10W + 6.25H - 5A - 161
@@ -146,19 +148,17 @@ userSchema.pre('save', function(next) {
         bmr: this.healthProfile.bmr
       });
     }
-    next();
   } catch (error) {
     console.error('Error calculating BMI/BMR:', error);
-    next(error);
+    throw error; // rejects the save() promise, caught by the controller's try/catch
   }
 });
 
 // Hash password before saving
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  
+userSchema.pre('save', async function() {
+  if (!this.isModified('password')) return;
+
   this.password = await bcrypt.hash(this.password, 12);
-  next();
 });
 
 // Compare password method
